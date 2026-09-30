@@ -1,0 +1,118 @@
+name: smart_pillbox
+description: تطبيق دوائي - صندوق الدواء الذكي لإدارة الأدوية والأدراج
+publish_to: 'none' # منع النشر على pub.dev (تطبيق خاص)
+version: 1.0.0+1 # الإصدار الحالي للتطبيق
+
+environment:
+  sdk: '>=3.0.0 <4.0.0' # إصدار Dart SDK المطلوب
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  workmanager: 0.9.0+2
+
+  # 📱 مكتبة sqflite: قاعدة بيانات SQLite محلية لتخزين بيانات الأدوية
+  # تستخدم لحفظ الأدوية والجرعات والمواعيد على جهاز المستخدم
+  sqflite: ^2.3.0
+
+  fl_chart: ^0.69.0
+
+  # 🛤️ مكتبة path: تساعد في تحديد مسار قاعدة البيانات على الجهاز
+  # تستخدم مع sqflite لتحديد مكان تخزين ملف قاعدة البيانات
+  path: ^1.9.0
+
+  # 📅 مكتبة intl: تنسيق التواريخ والأوقات حسب اللغة العربية
+  # تستخدم لعرض الوقت بصيغة 12 ساعة مع صباحاً/مساءً
+  intl: ^0.20.3
+
+  # 🔔 مكتبة flutter_local_notifications: إرسال إشعارات محلية للمستخدم
+  # تستخدم لتنبيه المستخدم عند موعد الدواء حتى لو كان التطبيق مغلقاً
+  flutter_local_notifications: ^18.0.1
+
+  # 🌍 مكتبة timezone: التعامل مع المناطق الزمنية المختلفة
+  # ضرورية لجدولة الإشعارات في الوقت الصحيح حسب منطقة المستخدم
+  timezone: ^0.10.1
+
+  # 🎯 مكتبة GetX: إدارة الحالة والتوجيه بين الصفحات بسهولة
+  # توفر: إدارة State، التنقل بين الصفحات، Snackbars، Dialogues
+  get: ^4.6.6
+
+  # ✍️ مكتبة google_fonts: استخدام خطوط Google بسهولة
+  # سنستخدم خط Cairo للغة العربية (خط جميل ومقروء)
+  google_fonts: ^8.2.1
+
+  # 🎨 مكتبة flutter_native_splash: شاشة بداية احترافية
+  # تظهر قبل تحميل التطبيق مباشرة
+  flutter_native_splash: ^2.3.9
+
+  # ✨ مكتبة flutter_animate: إضافة حركات وانتقالات سلسة
+  # تجعل التطبيق أكثر حيوية واحترافية
+  flutter_animate: ^4.2.0
+
+  # 💫 مكتبة shimmer: تأثير تحميل جميل (تلميع)
+  # يستخدم أثناء تحميل البيانات
+  shimmer: ^3.0.0
+
+  # 🌊 مكتبة liquid_swipe: تأثير انتقال سائل بين صفحات الـ Onboarding
+  # يوفر تجربة مستخدم فريدة وجذابة
+  liquid_swipe: ^3.1.0
+
+  # 📍 مكتبة smooth_page_indicator: مؤشر الصفحات بشكل نقاط متحركة
+  # يوضح للمستخدم في أي صفحة هو الآن
+  smooth_page_indicator: ^3.0.0
+
+  # 💾 مكتبة shared_preferences: تخزين بيانات بسيطة (مفتاح-قيمة)
+  # نستخدمها لحفظ إعدادات المستخدم (مثلاً: هل فتح التطبيق لأول مرة؟)
+  shared_preferences: ^2.2.2
+
+  # مكتبة الربط عن طريق بلوتوث
+  flutter_blue_plus: ^2.3.13
+
+  # 🔥 Firebase
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  cloud_firestore: ^6.10.0
+  firebase_messaging: ^16.7.0
+
+  # 📄 PDF
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0 # قواعد كتابة كود نظيف
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true # استخدام أيقونات Material Design
+  assets:
+    - assets/icons/
+    - assets/fonts/
+
+  # 🔤 الخطوط المخصصة
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+        - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700
+
+# ⚙️ إعدادات شاشة البداية الأصلية
+flutter_native_splash:
+  color: "#1B7B6E" # لون الخلفية (أخضر داكن)
+  android: true # تفعيل على أندرويد
+  ios: true # تفعيل على iOS
+  web: false # تعطيل على الويب
+
+# 4. إضافة إعدادات أيقونة التطبيق
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/icon.png"
+  adaptive_icon_background: "#1B7B6E"
+  adaptive_icon_foreground: "assets/icons/icon.png"
+  remove_alpha_ios: true
+  min_sdk_android: 21

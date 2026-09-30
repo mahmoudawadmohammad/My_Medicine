@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "853731730316",
+    "project_id": "dawaei-app-938ef",
+    "storage_bucket": "dawaei-app-938ef.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:853731730316:android:dc617af8c8e5d5e70e2ca9",
+        "android_client_info": {
+          "package_name": "com.example.smart_pillbox"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "853731730316-nmktu2rtoce5ah8fhtp03vs4563csmsp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAYV2DGteOZlCRzsppapVFv6n-PetNYalE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "853731730316-nmktu2rtoce5ah8fhtp03vs4563csmsp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
