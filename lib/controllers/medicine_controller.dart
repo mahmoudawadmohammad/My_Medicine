@@ -2,14 +2,14 @@
 // ملف: medicine_controller.dart
 // المسار: lib/controllers/medicine_controller.dart
 // الوصف: متحكم الأدوية - يدعم عزل البيانات + تسجيل الأحداث
-//         ✅ يسجل كل عملية في medicine_logs
+//         ✅ تم إصلاح مشكلة التكرار (حبتين بدل حبة)
 // ============================================================
 
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../models/medicine.dart';
-import '../models/medicine_log.dart';   // ✅ جديد
+import '../models/medicine_log.dart';
 import '../core/database/database_helper.dart';
 import '../core/utils/notification_helper.dart';
 import '../services/auth_service.dart';
@@ -25,6 +25,9 @@ class MedicineController extends GetxController {
 
   Timer? _timer;
   Worker? _authWorker;
+
+  // ✅✅✅ قائمة لتتبع الجرعات قيد المعالجة (لمنع التكرار)
+  final Set<String> _processingDoses = <String>{};
 
   // ==========================================================
   // المتغيرات التفاعلية
@@ -135,7 +138,7 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // فحص الأدوية المستحقة
+  // ✅ فحص الأدوية المستحقة (معدل - بدون تكرار)
   // ==========================================================
 
   void _checkDueMedicines() {
@@ -164,7 +167,17 @@ class MedicineController extends GetxController {
         final int diff = (medMinutes - nowMinutes).abs();
 
         if (diff == 0) {
+          // ✅ التحقق من القائمة المحلية
           if (med.wasTimeProcessedToday(doseNumber)) continue;
+
+          // ✅✅✅ التحقق الإضافي: هل هذه الجرعة قيد المعالجة؟
+          final doseKey = '${med.id}_$doseNumber';
+          if (_processingDoses.contains(doseKey)) {
+            debugPrint('⏭️ الجرعة $doseNumber للدواء ${med.name} قيد المعالجة - تخطي');
+            continue;
+          }
+
+          // ✅✅✅ معالجة الجرعة (مع قراءة من قاعدة البيانات)
           _processMedicineDose(med, doseNumber);
           break;
         }
@@ -173,24 +186,78 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // ✅ معالجة جرعة (مع تسجيل الحدث)
+  // ✅ معالجة جرعة (مع قراءة من قاعدة البيانات لمنع التكرار)
   // ==========================================================
 
   Future<void> _processMedicineDose(Medicine medicine, int doseNumber) async {
-    try {
-      final String? userId = _authService.userId;
-      if (userId == null) return;
+    final String? userId = _authService.userId;
+    if (userId == null) return;
 
-      if (!medicine.isScheduledForToday()) return;
+    // ✅✅✅ مفتاح فريد للجرعة
+    final String doseKey = '${medicine.id}_$doseNumber';
+
+    // ✅✅✅ التحقق: هل الجرعة قيد المعالجة؟
+    if (_processingDoses.contains(doseKey)) {
+      debugPrint('⏭️ الجرعة $doseNumber قيد المعالجة - تخطي');
+      return;
+    }
+
+    // ✅✅✅ إضافة الجرعة لقائمة المعالجة
+    _processingDoses.add(doseKey);
+    debugPrint('🔒 تم قفل الجرعة $doseKey');
+
+    try {
+      if (!medicine.isScheduledForToday()) {
+        debugPrint('⏭️ الدواء ${medicine.name} غير مجدول اليوم');
+        return;
+      }
+
+      // ✅✅✅ قراءة الدواء من قاعدة البيانات (للتأكد من الحالة الحالية)
+      debugPrint('🔍 قراءة الدواء ${medicine.name} من قاعدة البيانات...');
+      final freshMedicines = await _dbHelper.getMedicines(userId);
+      final freshMedicine = freshMedicines.firstWhereOrNull(
+            (m) => m.id == medicine.id,
+      );
+
+      if (freshMedicine == null) {
+        debugPrint('❌ الدواء غير موجود في القاعدة');
+        return;
+      }
+
+      // ✅✅✅ التحقق: هل WorkManager عالج الجرعة بالفعل؟
+      if (freshMedicine.wasTimeProcessedToday(doseNumber)) {
+        debugPrint('✅ الجرعة $doseNumber معالجة بالفعل (من WorkManager) - تخطي');
+
+        // ✅ تحديث القائمة المحلية من القاعدة
+        final index = _medicines.indexWhere((m) => m.id == medicine.id);
+        if (index != -1) {
+          _medicines[index] = freshMedicine;
+          _medicines.refresh();
+        }
+        _updateTotalPills();
+        return;
+      }
+
+      // ✅✅✅ التحقق من وجود حبات
+      if (freshMedicine.pillCount <= 0) {
+        debugPrint('⚠️ لا توجد حبات في ${freshMedicine.name}');
+        return;
+      }
+
+      debugPrint('✅ يمكن معالجة الجرعة $doseNumber - جاري التنفيذ...');
 
       // ✅ حفظ عدد الحبات قبل
-      final int pillCountBefore = medicine.pillCount;
+      final int pillCountBefore = freshMedicine.pillCount;
 
-      final updatedAfterTake = medicine.takeOnePill();
-      final updatedAfterProcess = updatedAfterTake.markTimeAsProcessed(doseNumber);
+      // ✅ إنقاص حبة + تسجيل الوقت
+      final updatedAfterTake = freshMedicine.takeOnePill();
+      final updatedAfterProcess =
+      updatedAfterTake.markTimeAsProcessed(doseNumber);
 
+      // ✅ تحديث قاعدة البيانات
       await _dbHelper.updateMedicine(updatedAfterProcess, userId);
 
+      // ✅ تحديث القائمة المحلية
       final index = _medicines.indexWhere((m) => m.id == medicine.id);
       if (index != -1) {
         _medicines[index] = updatedAfterProcess;
@@ -199,17 +266,19 @@ class MedicineController extends GetxController {
 
       _updateTotalPills();
 
-      // ✅ تسجيل الحدث في medicine_logs
+      // ✅ تسجيل الحدث
       await _logTaken(
         userId: userId,
-        medicine: medicine,
+        medicine: freshMedicine,
         doseNumber: doseNumber,
         pillCountBefore: pillCountBefore,
         pillCountAfter: updatedAfterProcess.pillCount,
       );
 
-      debugPrint('✅ تمت معالجة الجرعة $doseNumber من ${medicine.name}');
+      debugPrint('✅ تمت معالجة الجرعة $doseNumber من ${freshMedicine.name}');
+      debugPrint('📊 الحبات: $pillCountBefore → ${updatedAfterProcess.pillCount}');
 
+      // ✅ إذا نفذت الحبات
       if (updatedAfterProcess.pillCount == 0) {
         _notificationHelper.showLowStockNotification(
           updatedAfterProcess,
@@ -217,7 +286,7 @@ class MedicineController extends GetxController {
         );
         Get.snackbar(
           'warning_alert'.tr,
-          '${'pills_run_out'.tr} ${medicine.name}',
+          '${'pills_run_out'.tr} ${freshMedicine.name}',
           snackPosition: SnackPosition.TOP,
           backgroundColor: Colors.orange,
           colorText: Colors.white,
@@ -226,11 +295,18 @@ class MedicineController extends GetxController {
       }
     } catch (e) {
       debugPrint('❌ خطأ في معالجة الجرعة: $e');
+    } finally {
+      // ✅✅✅ إزالة الجرعة من قائمة المعالجة (بعد 5 ثواني)
+      // ننتظر قليلاً لمنع التكرار في نفس الدقيقة
+      Future.delayed(const Duration(seconds: 5), () {
+        _processingDoses.remove(doseKey);
+        debugPrint('🔓 تم فتح الجرعة $doseKey');
+      });
     }
   }
 
   // ==========================================================
-  // ✅ دالة مساعدة: تسجيل حدث "تناول"
+  // دالة مساعدة: تسجيل حدث "تناول"
   // ==========================================================
 
   Future<void> _logTaken({
@@ -241,7 +317,6 @@ class MedicineController extends GetxController {
     required int pillCountAfter,
   }) async {
     try {
-      // ✅ الحصول على الوقت المجدول
       String? scheduledTime;
       if (doseNumber == 1) {
         scheduledTime = _formatTimeOfDay(medicine.time);
@@ -272,7 +347,7 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // ✅ دالة مساعدة: تسجيل حدث "تعبئة"
+  // دالة مساعدة: تسجيل حدث "تعبئة"
   // ==========================================================
 
   Future<void> _logRefill({
@@ -303,7 +378,7 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // ✅ دالة مساعدة: تنسيق TimeOfDay إلى نص
+  // دالة مساعدة: تنسيق TimeOfDay إلى نص
   // ==========================================================
 
   String _formatTimeOfDay(TimeOfDay time) {
@@ -400,7 +475,7 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // ✅ إعادة تعبئة (مع تسجيل الحدث)
+  // إعادة تعبئة (مع تسجيل الحدث)
   // ==========================================================
 
   Future<bool> refillMedicine(int medicineId, int additionalPills) async {
@@ -410,7 +485,6 @@ class MedicineController extends GetxController {
     try {
       final medicine = _medicines.firstWhere((m) => m.id == medicineId);
 
-      // ✅ حفظ عدد الحبات قبل
       final int pillCountBefore = medicine.pillCount;
 
       final updatedMedicine = medicine.refill(additionalPills);
@@ -418,7 +492,6 @@ class MedicineController extends GetxController {
       await _dbHelper.updateMedicine(updatedMedicine, userId);
       await _loadMedicines();
 
-      // ✅ تسجيل الحدث في medicine_logs
       await _logRefill(
         userId: userId,
         medicine: medicine,
@@ -447,7 +520,7 @@ class MedicineController extends GetxController {
   }
 
   // ==========================================================
-  // ✅ تناول حبة يدوياً (مع تسجيل الحدث)
+  // تناول حبة يدوياً (مع تسجيل الحدث)
   // ==========================================================
 
   Future<void> takePillManually(int medicineId) async {
@@ -465,7 +538,6 @@ class MedicineController extends GetxController {
       final isOnTime = medicine.isExactTimeNow();
       final currentDose = medicine.getCurrentDoseNumber();
 
-      // ✅ حفظ عدد الحبات قبل
       final int pillCountBefore = medicine.pillCount;
 
       final updatedMedicine = medicine.takeOnePill();
@@ -479,8 +551,6 @@ class MedicineController extends GetxController {
 
       await _loadMedicines();
 
-      // ✅ تسجيل الحدث
-      // إذا كنا في وقت جرعة، نسجلها برقمها. وإلا، نسجلها كـ dose 0 (يدوي خارج الوقت)
       final int doseToLog = currentDose > 0 ? currentDose : 1;
 
       await _logTaken(
