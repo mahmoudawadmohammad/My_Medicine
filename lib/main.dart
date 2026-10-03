@@ -9,7 +9,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:smart_pillbox/services/auth_service.dart';
 import 'package:smart_pillbox/services/background_task.dart';
 import 'package:timezone/data/latest.dart' as tz;
@@ -38,11 +37,15 @@ void main() async {
   } catch (e) {
     debugPrint('❌ خطأ في تهيئة Firebase: $e');
   }
-
+ try{
   // ✅ تهيئة WorkManager
   await Workmanager().initialize(
     callbackDispatcher,
   );
+  debugPrint('✅ تم تهيئة Workmanager');
+}catch (e){
+   debugPrint('❌ خطأ في تهيئة Workmanager: $e');
+ }
 
   // ===== الحفاظ على شاشة البداية =====
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);

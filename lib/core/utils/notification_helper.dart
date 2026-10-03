@@ -1,13 +1,12 @@
 // ============================================================
 // ملف: notification_helper.dart
 // المسار: lib/core/utils/notification_helper.dart
-// الوصف: مساعد الإشعارات - يعمل في الخلفية + جدولة + صلاحيات
-//         + WorkManager لإنقاص الحبات تلقائياً
+// الوصف: مساعد الإشعارات - ✅ تم حذف showMedicineNotification المكررة
 // ============================================================
 
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:get/get.dart';
+import 'package:get/get_utils/src/extensions/internacionalization.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -168,7 +167,6 @@ class NotificationHelper {
   DateTime? _calculateNextScheduledDate(TimeOfDay doseTime, Medicine medicine) {
     final now = DateTime.now();
 
-    // نبحث خلال 30 يوم القادمة
     for (int daysToAdd = 0; daysToAdd < 30; daysToAdd++) {
       final candidateDate = DateTime(
         now.year,
@@ -178,12 +176,10 @@ class NotificationHelper {
         doseTime.minute,
       );
 
-      // تخطي الأوقات اللي فاتت
       if (candidateDate.isBefore(now)) {
         continue;
       }
 
-      // ✅ التحقق: هل اليوم مطابق؟
       if (medicine.isScheduledForToday(dateTime: candidateDate)) {
         debugPrint('📅 أقرب يوم مطابق: $candidateDate');
         return candidateDate;
@@ -194,73 +190,8 @@ class NotificationHelper {
     return null;
   }
 
-  // ==========================================================
-  // 💊 إشعار فوري
-  // ==========================================================
-  Future<void> showMedicineNotification(Medicine medicine, {int? doseNumber}) async {
-    final settings = await _getNotificationSettings();
-
-    if (!settings['enabled']!) {
-      debugPrint('🔕 الإشعارات معطلة');
-      return;
-    }
-
-    if (medicine.pillCount <= 0) {
-      await showLowStockNotification(medicine, isEmpty: true);
-      return;
-    }
-
-    final bool vibrationEnabled = settings['vibration']!;
-    final bool soundEnabled = settings['sound']!;
-
-    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      _channelIdMedicine,
-      _channelNameMedicine,
-      channelDescription: _channelDescMedicine,
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: vibrationEnabled,
-      playSound: soundEnabled,
-      icon: '@mipmap/ic_launcher',
-      largeIcon: DrawableResourceAndroidBitmap('@mipmap/ic_launcher'),
-      color: const Color(0xFF1B7B6E),
-      colorized: true,
-      actions: [
-        AndroidNotificationAction('take_${medicine.id}', 'notification_take'.tr, showsUserInterface: true),
-        AndroidNotificationAction('snooze_${medicine.id}', 'notification_snooze'.tr, showsUserInterface: true),
-      ],
-      category: AndroidNotificationCategory.alarm,
-      visibility: NotificationVisibility.public,
-    );
-
-    final DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: soundEnabled,
-      badgeNumber: 1,
-      subtitle: 'medicine_time'.tr,
-      interruptionLevel: InterruptionLevel.timeSensitive,
-    );
-
-    final NotificationDetails details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    final int notificationId = doseNumber != null
-        ? _medicineNotificationBase + (medicine.id ?? 0) * 10 + doseNumber
-        : _medicineNotificationBase + (medicine.id ?? 0);
-
-    await _notificationsPlugin.show(
-      notificationId,
-      _getMedicineNotificationTitle(medicine, doseNumber: doseNumber),
-      _getMedicineNotificationBody(medicine, doseNumber: doseNumber),
-      details,
-      payload: 'medicine_${medicine.id}_${doseNumber ?? 0}',
-    );
-
-    debugPrint('🔔 تم إرسال إشعار فوري (جرعة $doseNumber)');
-  }
+  // ❌❌❌ تم حذف showMedicineNotification بالكامل
+  // السبب: كانت تعرض إشعار فوري مكرر مع الإشعار المجدول
 
   // ==========================================================
   // ✅ جدولة إشعار (مع مراعاة الأيام المحددة)
@@ -270,14 +201,12 @@ class NotificationHelper {
     required TimeOfDay doseTime,
     required int doseNumber,
   }) async {
-    // ✅ التحقق من تفعيل الإشعارات
     final settings = await _getNotificationSettings();
     if (!settings['enabled']!) {
       debugPrint('🔕 الإشعارات معطلة');
       return;
     }
 
-    // ✅ حساب أقرب يوم مطابق
     final DateTime? scheduledDate = _calculateNextScheduledDate(doseTime, medicine);
     if (scheduledDate == null) {
       debugPrint('⚠️ لا يوجد يوم مطابق');
@@ -319,7 +248,6 @@ class NotificationHelper {
 
     final int notificationId = (medicine.id ?? 0) * 10 + doseNumber;
 
-    // ✅ جدولة الإشعار (بدون matchDateTimeComponents)
     await _notificationsPlugin.zonedSchedule(
       notificationId,
       _getMedicineNotificationTitle(medicine, doseNumber: doseNumber),
@@ -335,31 +263,27 @@ class NotificationHelper {
   }
 
   // ==========================================================
-// ✅ جدولة الإشعار + WorkManager معاً
-// ==========================================================
+  // ✅ جدولة الإشعار + WorkManager معاً
+  // ==========================================================
   Future<void> scheduleMedicineNotificationWithWorkManager({
     required Medicine medicine,
     required TimeOfDay doseTime,
     required int doseNumber,
   }) async {
-    // ✅ التحقق من تفعيل الإشعارات
     final settings = await _getNotificationSettings();
     if (!settings['enabled']!) {
       debugPrint('🔕 الإشعارات معطلة');
       return;
     }
 
-    // ✅ إلغاء أي إشعار سابق لهذه الجرعة
     await cancelScheduledDose(medicine.id!, doseNumber);
 
-    // ✅ حساب أقرب يوم مطابق
     final DateTime? scheduledDate = _calculateNextScheduledDate(doseTime, medicine);
     if (scheduledDate == null) {
       debugPrint('⚠️ لا يوجد يوم مطابق');
       return;
     }
 
-    // ✅ حساب التأخير
     final Duration initialDelay = scheduledDate.difference(DateTime.now());
     if (initialDelay.isNegative) {
       debugPrint('⚠️ التأخير سالب');
@@ -382,7 +306,7 @@ class NotificationHelper {
         inputData: {
           'medicineId': medicine.id,
           'doseNumber': doseNumber,
-          'userId': medicine.userId ?? '',   // ✅ جديد - تمرير userId
+          'userId': medicine.userId ?? '',
         },
         constraints: Constraints(
           networkType: NetworkType.notRequired,
@@ -419,12 +343,10 @@ class NotificationHelper {
   // ✅ إلغاء الإشعارات + مهام WorkManager للدواء
   // ==========================================================
   Future<void> cancelAllScheduledForMedicine(int medicineId) async {
-    // 1️⃣ إلغاء الإشعارات المجدولة
     for (int i = 1; i <= 5; i++) {
       await _notificationsPlugin.cancel(medicineId * 10 + i);
     }
 
-    // 2️⃣ إلغاء مهام WorkManager
     try {
       for (int i = 1; i <= 5; i++) {
         await Workmanager().cancelByUniqueName('medicine_${medicineId}_$i');
@@ -736,7 +658,7 @@ class NotificationHelper {
   String _getMedicineNotificationBody(Medicine medicine, {int? doseNumber}) {
     final StringBuffer buffer = StringBuffer();
 
-    if (doseNumber != null) {
+   /* if (doseNumber != null) {
       if (doseNumber == 1) {
         buffer.write('💊 ${'first_dose'.tr}\n');
       } else if (doseNumber == 2) {
@@ -744,9 +666,9 @@ class NotificationHelper {
       } else if (doseNumber == 3) {
         buffer.write('💊 ${'third_dose'.tr}\n');
       }
-    }
+    }*/
 
-    buffer.write('${'remaining_colon'.tr} ${medicine.pillCount} ${'pill'.tr}.');
+    //buffer.write('${'remaining_colon'.tr} ${medicine.pillCount-1} ${'pill'.tr}.');
 
     if (medicine.pillCount == 1) {
       buffer.write('\n${'last_pill_refill'.tr}');

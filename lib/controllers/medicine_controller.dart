@@ -3,6 +3,7 @@
 // المسار: lib/controllers/medicine_controller.dart
 // الوصف: متحكم الأدوية - يدعم عزل البيانات + تسجيل الأحداث
 //         ✅ تم إصلاح مشكلة التكرار (حبتين بدل حبة)
+//         ✅ تم إصلاح مشكلة الإشعارين (حذف الإشعار الفوري المكرر)
 // ============================================================
 
 import 'dart:async';
@@ -26,7 +27,7 @@ class MedicineController extends GetxController {
   Timer? _timer;
   Worker? _authWorker;
 
-  // ✅✅✅ قائمة لتتبع الجرعات قيد المعالجة (لمنع التكرار)
+  // ✅ قائمة لتتبع الجرعات قيد المعالجة (لمنع التكرار)
   final Set<String> _processingDoses = <String>{};
 
   // ==========================================================
@@ -170,14 +171,14 @@ class MedicineController extends GetxController {
           // ✅ التحقق من القائمة المحلية
           if (med.wasTimeProcessedToday(doseNumber)) continue;
 
-          // ✅✅✅ التحقق الإضافي: هل هذه الجرعة قيد المعالجة؟
+          // ✅ التحقق الإضافي: هل هذه الجرعة قيد المعالجة؟
           final doseKey = '${med.id}_$doseNumber';
           if (_processingDoses.contains(doseKey)) {
             debugPrint('⏭️ الجرعة $doseNumber للدواء ${med.name} قيد المعالجة - تخطي');
             continue;
           }
 
-          // ✅✅✅ معالجة الجرعة (مع قراءة من قاعدة البيانات)
+          // ✅ معالجة الجرعة (مع قراءة من قاعدة البيانات)
           _processMedicineDose(med, doseNumber);
           break;
         }
@@ -193,16 +194,16 @@ class MedicineController extends GetxController {
     final String? userId = _authService.userId;
     if (userId == null) return;
 
-    // ✅✅✅ مفتاح فريد للجرعة
+    // ✅ مفتاح فريد للجرعة
     final String doseKey = '${medicine.id}_$doseNumber';
 
-    // ✅✅✅ التحقق: هل الجرعة قيد المعالجة؟
+    // ✅ التحقق: هل الجرعة قيد المعالجة؟
     if (_processingDoses.contains(doseKey)) {
       debugPrint('⏭️ الجرعة $doseNumber قيد المعالجة - تخطي');
       return;
     }
 
-    // ✅✅✅ إضافة الجرعة لقائمة المعالجة
+    // ✅ إضافة الجرعة لقائمة المعالجة
     _processingDoses.add(doseKey);
     debugPrint('🔒 تم قفل الجرعة $doseKey');
 
@@ -212,7 +213,7 @@ class MedicineController extends GetxController {
         return;
       }
 
-      // ✅✅✅ قراءة الدواء من قاعدة البيانات (للتأكد من الحالة الحالية)
+      // ✅ قراءة الدواء من قاعدة البيانات (للتأكد من الحالة الحالية)
       debugPrint('🔍 قراءة الدواء ${medicine.name} من قاعدة البيانات...');
       final freshMedicines = await _dbHelper.getMedicines(userId);
       final freshMedicine = freshMedicines.firstWhereOrNull(
@@ -224,7 +225,7 @@ class MedicineController extends GetxController {
         return;
       }
 
-      // ✅✅✅ التحقق: هل WorkManager عالج الجرعة بالفعل؟
+      // ✅ التحقق: هل WorkManager عالج الجرعة بالفعل؟
       if (freshMedicine.wasTimeProcessedToday(doseNumber)) {
         debugPrint('✅ الجرعة $doseNumber معالجة بالفعل (من WorkManager) - تخطي');
 
@@ -238,7 +239,7 @@ class MedicineController extends GetxController {
         return;
       }
 
-      // ✅✅✅ التحقق من وجود حبات
+      // ✅ التحقق من وجود حبات
       if (freshMedicine.pillCount <= 0) {
         debugPrint('⚠️ لا توجد حبات في ${freshMedicine.name}');
         return;
@@ -278,12 +279,11 @@ class MedicineController extends GetxController {
       debugPrint('✅ تمت معالجة الجرعة $doseNumber من ${freshMedicine.name}');
       debugPrint('📊 الحبات: $pillCountBefore → ${updatedAfterProcess.pillCount}');
 
-      // ✅ إذا نفذت الحبات
+      // ✅ إذا نفذت الحبات (SnackBar داخلي فقط - بدون إشعار نظام)
       if (updatedAfterProcess.pillCount == 0) {
-        _notificationHelper.showLowStockNotification(
-          updatedAfterProcess,
-          isEmpty: true,
-        );
+        // ❌ لا نستخدم showLowStockNotification هنا
+        //    لأن الإشعار المجدول (zonedSchedule) سيعرضه تلقائياً
+        // ✅ نستخدم SnackBar داخلي فقط
         Get.snackbar(
           'warning_alert'.tr,
           '${'pills_run_out'.tr} ${freshMedicine.name}',
@@ -296,7 +296,7 @@ class MedicineController extends GetxController {
     } catch (e) {
       debugPrint('❌ خطأ في معالجة الجرعة: $e');
     } finally {
-      // ✅✅✅ إزالة الجرعة من قائمة المعالجة (بعد 5 ثواني)
+      // ✅ إزالة الجرعة من قائمة المعالجة (بعد 5 ثواني)
       // ننتظر قليلاً لمنع التكرار في نفس الدقيقة
       Future.delayed(const Duration(seconds: 5), () {
         _processingDoses.remove(doseKey);

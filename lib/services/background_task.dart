@@ -3,19 +3,15 @@
 // المسار: lib/core/utils/background_task.dart
 // الوصف: المهام الخلفية (Background Tasks)
 //         ✅ يدعم عزل البيانات لكل مستخدم (userId)
-//         ✅ يدعم اللغتين (عربي/إنجليزي) بدون GetX
 //         ✅ يسجل الأحداث في medicine_logs
+//         ✅ لا يعرض إشعار (الإشعار المجدول يكفي)
 // ============================================================
 
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:workmanager/workmanager.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:timezone/data/latest.dart' as tz_data;
 
 // ==========================================================
 // ✅ اسم المهمة (فريد)
@@ -26,77 +22,6 @@ const String medicineDoseTask = "com.dawaei.app.medicineDose";
 // ✅ اسم قاعدة البيانات
 // ==========================================================
 const String _dbName = 'dawaei.db';
-
-// ==========================================================
-// ✅ قاموس النصوص - عربي
-// ==========================================================
-const Map<String, String> _arTexts = {
-  'notification_medicine': 'موعد الدواء',
-  'first_dose': 'الجرعة الأولى',
-  'second_dose': 'الجرعة الثانية',
-  'third_dose': 'الجرعة الثالثة',
-  'remaining_colon': 'المتبقي',
-  'pill': 'حبة',
-  'out_of_pills_need_refill': '🚫 نفذت الحبات - يحتاج إعادة تعبئة',
-  'notification_low_stock': '⚠️ المخزون منخفض - يُنصح بإعادة التعبئة',
-  'summary_medicine': 'دواء',
-};
-
-// ==========================================================
-// ✅ قاموس النصوص - إنجليزي
-// ==========================================================
-const Map<String, String> _enTexts = {
-  'notification_medicine': 'Medicine Time',
-  'first_dose': 'First Dose',
-  'second_dose': 'Second Dose',
-  'third_dose': 'Third Dose',
-  'remaining_colon': 'Remaining',
-  'pill': 'pill',
-  'out_of_pills_need_refill': '🚫 Out of pills - Refill needed',
-  'notification_low_stock': '⚠️ Low stock - Refill recommended',
-  'summary_medicine': 'Medicine',
-};
-
-// ==========================================================
-// ✅ دالة قراءة اللغة الفعلية
-// ==========================================================
-Future<String> _getEffectiveLanguage() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final savedLang = prefs.getString('app_language') ?? 'system';
-
-    if (savedLang == 'system') {
-      final systemLocale = Platform.localeName;
-      final langCode = systemLocale.split('_').first.toLowerCase();
-
-      if (['ar', 'en'].contains(langCode)) {
-        return langCode;
-      }
-      return 'ar';
-    }
-
-    if (['ar', 'en'].contains(savedLang)) {
-      return savedLang;
-    }
-
-    return 'ar';
-  } catch (e) {
-    debugPrint('❌ خطأ في قراءة اللغة: $e');
-    return 'ar';
-  }
-}
-
-// ==========================================================
-// ✅ دالة الحصول على نص مترجم
-// ==========================================================
-Future<String> _getText(String key) async {
-  final lang = await _getEffectiveLanguage();
-  if (lang == 'ar') {
-    return _arTexts[key] ?? key;
-  } else {
-    return _enTexts[key] ?? key;
-  }
-}
 
 // ==========================================================
 // ✅ دالة الـ Callback (تنفذ في Isolate منفصل)
@@ -228,8 +153,10 @@ Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
     pillCountAfter: pillCount,
   );
 
-  // ✅ عرض الإشعار
-  await _showNotification(medicineMap, doseNumber, pillCount);
+  // ❌ تم حذف عرض الإشعار
+  // await _showNotification(medicineMap, doseNumber, pillCount);
+  // السبب: الإشعار المجدول (zonedSchedule) يعرض الإشعار أصلاً
+  //        عرض إشعار آخر بنفس المعرف يستبدل الإشعار الأصلي
 
   // ✅ إعادة جدولة الجرعة القادمة (مع userId)
   await _rescheduleNextDose(medicineId, doseNumber, userId, medicineMap);
@@ -275,96 +202,6 @@ Future<void> _logTakenInBackground({
     debugPrint('📝 تم تسجيل: taken ($medicineName - جرعة $doseNumber)');
   } catch (e) {
     debugPrint('❌ خطأ في تسجيل الحدث: $e');
-  }
-}
-
-// ==========================================================
-// ✅ عرض الإشعار (مع دعم اللغتين)
-// ==========================================================
-Future<void> _showNotification(
-    Map<String, dynamic> medicineMap,
-    int doseNumber,
-    int remainingPills,
-    ) async {
-  try {
-    tz_data.initializeTimeZones();
-
-    final FlutterLocalNotificationsPlugin plugin = FlutterLocalNotificationsPlugin();
-
-    const AndroidInitializationSettings androidSettings =
-    AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const InitializationSettings initSettings = InitializationSettings(
-      android: androidSettings,
-    );
-
-    await plugin.initialize(initSettings);
-
-    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'pillbox_medicine_channel_v2',
-      'تنبيهات مواعيد الأدوية',
-      channelDescription: 'إشعارات عند موعد تناول الدواء',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: true,
-      playSound: true,
-      icon: '@mipmap/ic_launcher',
-      color: const Color(0xFF1B7B6E),
-      colorized: true,
-      category: AndroidNotificationCategory.alarm,
-      visibility: NotificationVisibility.public,
-    );
-
-    final NotificationDetails details = NotificationDetails(
-      android: androidDetails,
-    );
-
-    // ✅ قراءة النصوص من القواميس (حسب اللغة)
-    final String notificationMedicine = await _getText('notification_medicine');
-    final String firstDose = await _getText('first_dose');
-    final String secondDose = await _getText('second_dose');
-    final String thirdDose = await _getText('third_dose');
-    final String remainingColon = await _getText('remaining_colon');
-    final String pill = await _getText('pill');
-    final String outOfPills = await _getText('out_of_pills_need_refill');
-    final String lowStock = await _getText('notification_low_stock');
-    final String summaryMedicine = await _getText('summary_medicine');
-
-    final String name = medicineMap['name'] ?? summaryMedicine;
-    final int id = medicineMap['id'] ?? 0;
-
-    // ✅ بناء doseLabel
-    String doseLabel = '';
-    if (doseNumber == 1) {
-      doseLabel = '($firstDose)';
-    } else if (doseNumber == 2) {
-      doseLabel = '($secondDose)';
-    } else if (doseNumber == 3) {
-      doseLabel = '($thirdDose)';
-    }
-
-    // ✅ بناء النص
-    String title = '🔔 $notificationMedicine: $name $doseLabel';
-    String body = '💊 $remainingColon: $remainingPills $pill.';
-
-    if (remainingPills == 0) {
-      body += '\n$outOfPills';
-    } else if (remainingPills <= 3) {
-      body += '\n$lowStock';
-    }
-
-    // ✅ عرض الإشعار
-    await plugin.show(
-      id * 10 + doseNumber,
-      title,
-      body,
-      details,
-      payload: 'medicine_${id}_$doseNumber',
-    );
-
-    debugPrint('🔔 تم إرسال الإشعار: $title');
-  } catch (e) {
-    debugPrint('❌ خطأ في عرض الإشعار: $e');
   }
 }
 
@@ -426,6 +263,7 @@ Future<void> _rescheduleNextDose(
       constraints: Constraints(
         networkType: NetworkType.notRequired,
       ),
+      existingWorkPolicy: ExistingWorkPolicy.keep,
     );
 
     debugPrint('✅ تمت إعادة جدولة الجرعة $doseNumber في $nextDate (المستخدم: $userId)');
@@ -440,6 +278,7 @@ Future<void> _rescheduleNextDose(
 DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
   final DateTime now = DateTime.now();
 
+  // ✅✅✅ إصلاح: نبدأ من الغد
   for (int daysToAdd = 1; daysToAdd < 30; daysToAdd++) {
     final DateTime candidate = DateTime(
       now.year,
@@ -449,7 +288,9 @@ DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
       minute,
     );
 
+    // ✅✅✅ إذا كل الأيام: نرجع الغد مباشرة (بدون شروط)
     if (selectedDays.isEmpty) {
+      debugPrint('📅 كل الأيام → الغد: $candidate');
       return candidate;
     }
 
@@ -457,35 +298,37 @@ DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
     int ourDayValue;
     switch (flutterWeekday) {
       case 6:
-        ourDayValue = 1;
+        ourDayValue = 1; // السبت
         break;
       case 7:
-        ourDayValue = 2;
+        ourDayValue = 2; // الأحد
         break;
       case 1:
-        ourDayValue = 3;
+        ourDayValue = 3; // الاثنين
         break;
       case 2:
-        ourDayValue = 4;
+        ourDayValue = 4; // الثلاثاء
         break;
       case 3:
-        ourDayValue = 5;
+        ourDayValue = 5; // الأربعاء
         break;
       case 4:
-        ourDayValue = 6;
+        ourDayValue = 6; // الخميس
         break;
       case 5:
-        ourDayValue = 7;
+        ourDayValue = 7; // الجمعة
         break;
       default:
         ourDayValue = 0;
     }
 
     if (selectedDays.contains(ourDayValue)) {
+      debugPrint('📅 يوم مطابق: $candidate (يوم $ourDayValue)');
       return candidate;
     }
   }
 
+  debugPrint('⚠️ لا يوجد يوم مطابق خلال 30 يوم');
   return null;
 }
 
