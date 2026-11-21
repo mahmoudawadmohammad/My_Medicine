@@ -2,6 +2,7 @@
 // ملف: add_category_screen.dart
 // المسار: lib/views/categories/add_category_screen.dart
 // الوصف: شاشة إضافة تصنيف جديد مع اختيار اللون والأيقونة
+//         ✅ تمت إضافة حماية ضد الضغط المتكرر (Loading State)
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
@@ -345,34 +346,49 @@ class _AddCategoryScreenState extends State<AddCategoryScreen> {
                   const SizedBox(height: 40),
 
                   // ==========================================
-                  // ✅ زر الحفظ
+                  // ✅ زر الحفظ (مع حماية من الضغط المتكرر)
                   // ==========================================
-                  ElevatedButton(
-                    onPressed: _saveCategory,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      elevation: 5,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          widget.category == null ? 'save_category'.tr : 'update_category'.tr,
-                          style: GoogleFonts.cairo(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  Obx(() {
+                    final isLoading = _categoryController.isLoading;
+
+                    return ElevatedButton(
+                      // 👇 تعطيل الزر أثناء التحميل
+                      onPressed: isLoading ? null : _saveCategory,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
                         ),
-                        const SizedBox(width: 10),
-                        const Icon(Icons.save_alt),
-                      ],
-                    ),
-                  ),
+                        elevation: 5,
+                        disabledBackgroundColor: primaryColor.withOpacity(0.5),
+                      ),
+                      child: isLoading
+                          ? const SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
+                          : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            widget.category == null ? 'save_category'.tr : 'update_category'.tr,
+                            style: GoogleFonts.cairo(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Icon(Icons.save_alt),
+                        ],
+                      ),
+                    );
+                  }),
 
                   const SizedBox(height: 20),
                 ],

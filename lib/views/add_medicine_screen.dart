@@ -2,6 +2,7 @@
 // ملف: add_medicine_screen.dart
 // المسار: lib/views/add_medicine/add_medicine_screen.dart
 // الوصف: صفحة إضافة دواء - تصنيف اختياري بدل الدرج
+//         ✅ تمت إضافة حماية ضد الضغط المتكرر (Loading State)
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
@@ -254,34 +255,49 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   const SizedBox(height: 20),
 
                   // ==========================================
-                  // 9️⃣ زر الحفظ
+                  // 9️⃣ زر الحفظ (مع حماية من الضغط المتكرر)
                   // ==========================================
-                  ElevatedButton(
-                    onPressed: _saveMedicine,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      elevation: 5,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'save_medicine'.tr,
-                          style: GoogleFonts.cairo(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  Obx(() {
+                    final isLoading = _medicineController.isLoading;
+
+                    return ElevatedButton(
+                      // 👇 تعطيل الزر أثناء التحميل
+                      onPressed: isLoading ? null : _saveMedicine,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
                         ),
-                        const SizedBox(width: 10),
-                        const Icon(Icons.save_alt),
-                      ],
-                    ),
-                  ),
+                        elevation: 5,
+                        disabledBackgroundColor: primaryColor.withOpacity(0.5),
+                      ),
+                      child: isLoading
+                          ? const SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: Colors.white,
+                        ),
+                      )
+                          : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'save_medicine'.tr,
+                            style: GoogleFonts.cairo(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Icon(Icons.save_alt),
+                        ],
+                      ),
+                    );
+                  }),
 
                   SizedBox(height: MediaQuery.of(context).viewInsets.bottom + 40),
                 ],
@@ -966,7 +982,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   }
 
   // ==========================================================
-  // ✅ دالة حفظ الدواء
+  // ✅ دالة حفظ الدواء (مع حماية من الضغط المتكرر)
   // ==========================================================
   Future<void> _saveMedicine() async {
     // 1️⃣ التحقق من صحة النموذج

@@ -3,6 +3,7 @@
 // المسار: lib/views/home/home_screen.dart
 // الوصف: الصفحة الرئيسية - قائمة الأدوية والتصنيفات
 //         ✅ تم إصلاح مشكلة تداخل النصوص مع الأزرار (Overflow)
+//         ✅ تمت إضافة ميزة السحب للتحديث (Pull to Refresh)
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -74,7 +75,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
-          // 👇 تم إزالة Expanded من هنا لأنه كان يسبب خطأ
           child: Column(
             children: [
               // ==================================================
@@ -238,25 +238,33 @@ class _HomeScreenState extends State<HomeScreen> {
                             return _buildEmptyState(context);
                           }
 
-                          // عرض القائمة
-                          return ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                            itemCount: medicines.length,
-                            itemBuilder: (context, index) {
-                              final medicine = medicines[index];
-
-                              return MedicineCard(
-                                medicine: medicine,
-                                onDelete: () => _medicineController.deleteMedicine(medicine.id!),
-                                onToggle: () => _medicineController.toggleMedicineActive(medicine.id!),
-                                onRefill: (additionalPills) {
-                                  _medicineController.refillMedicine(medicine.id!, additionalPills);
-                                },
-                                onTakePill: () {
-                                  _medicineController.takePillManually(medicine.id!);
-                                },
-                              );
+                          // 👇 التعديل: تغليف ListView.builder بـ RefreshIndicator
+                          return RefreshIndicator(
+                            onRefresh: () async {
+                              // استدعاء دالة إعادة التحميل في المتحكم
+                              await _medicineController.refreshMedicines();
                             },
+                            child: ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                              itemCount: medicines.length,
+                              // 👇 إضافة AlwaysScrollableScrollPhysics لضمان عمل السحب
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemBuilder: (context, index) {
+                                final medicine = medicines[index];
+
+                                return MedicineCard(
+                                  medicine: medicine,
+                                  onDelete: () => _medicineController.deleteMedicine(medicine.id!),
+                                  onToggle: () => _medicineController.toggleMedicineActive(medicine.id!),
+                                  onRefill: (additionalPills) {
+                                    _medicineController.refillMedicine(medicine.id!, additionalPills);
+                                  },
+                                  onTakePill: () {
+                                    _medicineController.takePillManually(medicine.id!);
+                                  },
+                                );
+                              },
+                            ),
                           );
                         }),
                       ),

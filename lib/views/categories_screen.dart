@@ -2,6 +2,7 @@
 // ملف: categories_screen.dart
 // المسار: lib/views/categories/categories_screen.dart
 // الوصف: شاشة إدارة التصنيفات - عرض وإضافة وتعديل وحذف
+//         ✅ تمت إضافة ميزة السحب للتحديث (Pull to Refresh)
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
@@ -58,33 +59,40 @@ class CategoriesScreen extends StatelessWidget {
             return _buildEmptyState(context);
           }
 
-          // عرض القائمة
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: categoryController.categories.length,
-            itemBuilder: (context, index) {
-              final category = categoryController.categories[index];
-
-              // ✅ عدد الأدوية في التصنيف
-              final count = medicineController.getMedicinesCountByCategory(category.id!);
-
-              return CategoryCard(
-                category: category,
-                medicinesCount: count,
-                // عند الضغط: عرض أدوية التصنيف
-                onTap: () {
-                  _showCategoryMedicines(context, category.id!);
-                },
-                // عند التعديل
-                onEdit: () {
-                  Get.to(() => AddCategoryScreen(category: category));
-                },
-                // عند الحذف
-                onDelete: () {
-                  _confirmDelete(context, category.id!, category.name);
-                },
-              );
+          // 👇 التعديل: تغليف ListView.builder بـ RefreshIndicator
+          return RefreshIndicator(
+            onRefresh: () async {
+              await categoryController.refreshCategories();
             },
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: categoryController.categories.length,
+              // 👇 إضافة AlwaysScrollableScrollPhysics لضمان عمل السحب
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemBuilder: (context, index) {
+                final category = categoryController.categories[index];
+
+                // ✅ عدد الأدوية في التصنيف
+                final count = medicineController.getMedicinesCountByCategory(category.id!);
+
+                return CategoryCard(
+                  category: category,
+                  medicinesCount: count,
+                  // عند الضغط: عرض أدوية التصنيف
+                  onTap: () {
+                    _showCategoryMedicines(context, category.id!);
+                  },
+                  // عند التعديل
+                  onEdit: () {
+                    Get.to(() => AddCategoryScreen(category: category));
+                  },
+                  // عند الحذف
+                  onDelete: () {
+                    _confirmDelete(context, category.id!, category.name);
+                  },
+                );
+              },
+            ),
           );
         }),
       ),
