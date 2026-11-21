@@ -497,7 +497,7 @@ class MedicineCard extends StatelessWidget {
               const SizedBox(width: 10),
               Text(
                 isOnTime ? 'confirm_take_medicine'.tr : 'manual_medicine_take'.tr,
-                style: GoogleFonts.cairo(fontWeight: FontWeight.bold),
+                style: GoogleFonts.cairo(fontWeight: FontWeight.bold,fontSize: 20,),
               ),
             ],
           ),
