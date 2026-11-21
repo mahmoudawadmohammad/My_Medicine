@@ -4,7 +4,7 @@
 // الوصف: المهام الخلفية (Background Tasks)
 //         ✅ يدعم عزل البيانات لكل مستخدم (userId)
 //         ✅ يسجل الأحداث في medicine_logs
-//         ✅ لا يعرض إشعار (الإشعار المجدول يكفي)
+//         ✅ يزامن البيانات مع Firestore (pillCount, processedTimes)
 // ============================================================
 
 import 'dart:async';
@@ -12,6 +12,10 @@ import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:workmanager/workmanager.dart';
+// 👇 ضفنا مكتبة الفايربيز
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:smart_pillbox/firebase_options.dart';
 
 // ==========================================================
 // ✅ اسم المهمة (فريد)
@@ -33,6 +37,11 @@ void callbackDispatcher() {
     debugPrint('📦 Input Data: $inputData');
 
     try {
+      // 🔥 تهيئة Firebase داخل الـ Isolate
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+
       if (task == medicineDoseTask) {
         await _handleMedicineDose(inputData!);
       }
@@ -45,7 +54,7 @@ void callbackDispatcher() {
 }
 
 // ==========================================================
-// ✅ معالجة جرعة الدواء (مع userId + تسجيل الحدث)
+// ✅ معالجة جرعة الدواء (مع userId + تسجيل الحدث + Firestore)
 // ==========================================================
 Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
   final int medicineId = inputData['medicineId'];
@@ -112,7 +121,7 @@ Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
     processedTimes.add(doseNumber);
   }
 
-  // ✅ تحديث قاعدة البيانات (مع userId)
+  // ✅ تحديث قاعدة البيانات المحلية (مع userId)
   await db.update(
     'medicines',
     {
@@ -124,7 +133,18 @@ Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
     whereArgs: [medicineId, userId],
   );
 
-  debugPrint('✅ تم إنقاص حبة. المتبقي: $pillCount');
+  debugPrint('✅ تم إنقاص حبة محلياً. المتبقي: $pillCount');
+
+  // ========================================================
+  // 🔥 التزامن مع Firestore
+  // ========================================================
+  await _syncWithFirestore(
+    userId: userId,
+    medicineId: medicineId,
+    pillCount: pillCount,
+    lastProcessedDate: now,
+    processedTimes: processedTimes,
+  );
 
   // ✅ تسجيل الحدث في medicine_logs
   int? scheduledHour;
@@ -153,13 +173,41 @@ Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
     pillCountAfter: pillCount,
   );
 
-  // ❌ تم حذف عرض الإشعار
-  // await _showNotification(medicineMap, doseNumber, pillCount);
-  // السبب: الإشعار المجدول (zonedSchedule) يعرض الإشعار أصلاً
-  //        عرض إشعار آخر بنفس المعرف يستبدل الإشعار الأصلي
-
   // ✅ إعادة جدولة الجرعة القادمة (مع userId)
   await _rescheduleNextDose(medicineId, doseNumber, userId, medicineMap);
+}
+
+// ==========================================================
+// 🔥 مزامنة البيانات مع Firestore
+// ==========================================================
+Future<void> _syncWithFirestore({
+  required String userId,
+  required int medicineId,
+  required int pillCount,
+  required DateTime lastProcessedDate,
+  required List<int> processedTimes,
+}) async {
+  try {
+    // المسار في Firestore: users/{userId}/medicines/{medicineId}
+    // ⚠️ تأكد أن هذا هو نفس المسار اللي بتستخدمه في التطبيق
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .collection('medicines')
+        .doc(medicineId.toString())
+        .set({
+      'pillCount': pillCount,
+      'lastProcessedDate': lastProcessedDate.toIso8601String(),
+      'processedTimes': processedTimes,
+      'lastSyncedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true)); // merge عشان ما نمسح باقي بيانات الدواء
+
+    debugPrint('✅ تمت مزامنة البيانات مع Firestore');
+  } catch (e) {
+    // ❌ لا نوقف العملية لو فشلت المزامنة (أوفلاين مثلاً)
+    // Firestore بيعيد المحاولة تلقائياً لما يرجع النت
+    debugPrint('⚠️ فشل التزامن مع Firestore (سيتم لاحقاً): $e');
+  }
 }
 
 // ==========================================================
@@ -278,7 +326,7 @@ Future<void> _rescheduleNextDose(
 DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
   final DateTime now = DateTime.now();
 
-  // ✅✅✅ إصلاح: نبدأ من الغد
+  // ✅✅✅ نبدأ من الغد
   for (int daysToAdd = 1; daysToAdd < 30; daysToAdd++) {
     final DateTime candidate = DateTime(
       now.year,
@@ -288,7 +336,7 @@ DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
       minute,
     );
 
-    // ✅✅✅ إذا كل الأيام: نرجع الغد مباشرة (بدون شروط)
+    // ✅✅✅ إذا كل الأيام: نرجع الغد مباشرة
     if (selectedDays.isEmpty) {
       debugPrint('📅 كل الأيام → الغد: $candidate');
       return candidate;

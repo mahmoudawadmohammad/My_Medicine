@@ -13,9 +13,12 @@ import 'package:smart_pillbox/services/auth_service.dart';
 import 'package:smart_pillbox/services/background_task.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // 👈 ضفت هاد الاستيراد
 import 'package:workmanager/workmanager.dart';
 
 import 'app.dart';
+import 'controllers/category_controller.dart';
+import 'controllers/medicine_controller.dart';
 import 'core/utils/notification_helper.dart';
 import 'controllers/theme_controller.dart';
 import 'controllers/language_controller.dart';
@@ -37,15 +40,6 @@ void main() async {
   } catch (e) {
     debugPrint('❌ خطأ في تهيئة Firebase: $e');
   }
- try{
-  // ✅ تهيئة WorkManager
-  await Workmanager().initialize(
-    callbackDispatcher,
-  );
-  debugPrint('✅ تم تهيئة Workmanager');
-}catch (e){
-   debugPrint('❌ خطأ في تهيئة Workmanager: $e');
- }
 
   // ===== الحفاظ على شاشة البداية =====
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
@@ -57,10 +51,42 @@ void main() async {
   Get.put(ThemeController());
   Get.put(LanguageController());
   Get.put(AuthService());
+  Get.put(MedicineController());
+  Get.put(CategoryController());
 
-  // ✅ تهيئة الإشعارات
-  final NotificationHelper notificationHelper = NotificationHelper();
-  await notificationHelper.initialize();
+  // ✅ تهيئة الإشعارات (FCM + Local Notifications)
+  try {
+    // 1. تهيئة FCM للخلفية (عشان الرسائل توصل لو التطبيق مسكر)
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+    // 2. طلب صلاحيات الإشعارات من المستخدم
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    // 3. جلب التوكن وطباعته (عشان تشوفه باللوج وتتأكد إنه شغال)
+    String? token = await FirebaseMessaging.instance.getToken();
+    debugPrint('📱 FCM Token: $token');
+
+    // 4. تهيئة الإشعارات المحلية والعرض
+    final NotificationHelper notificationHelper = NotificationHelper();
+    await notificationHelper.initialize();
+    debugPrint('✅ تم تهيئة الإشعارات (FCM + Local)');
+  } catch (e) {
+    debugPrint('❌ خطأ في تهيئة الإشعارات: $e');
+  }
+
+  try {
+    // ✅ تهيئة WorkManager
+    await Workmanager().initialize(
+      callbackDispatcher,
+    );
+    debugPrint('✅ تم تهيئة Workmanager');
+  } catch (e) {
+    debugPrint('❌ خطأ في تهيئة Workmanager: $e');
+  }
 
   // ===== تشغيل التطبيق =====
   runApp(const MyApp());

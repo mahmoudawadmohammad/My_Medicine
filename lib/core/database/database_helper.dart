@@ -4,6 +4,7 @@
 // الوصف: إدارة قاعدة بيانات SQLite
 //         يحتوي على جدولين: categories و medicines
 //         ✅ يدعم عزل البيانات لكل مستخدم (userId)
+//         ✅ يدعم upsert للسحب من Firestore
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
@@ -236,6 +237,34 @@ class DatabaseHelper {
     return await db.insert(_tableCategories, data);
   }
 
+  /// ✅ upsert (تحديث أو إضافة) تصنيف - للسحب من Firestore
+  Future<int> upsertCategory(Category category, String userId) async {
+    final db = await database;
+    final Map<String, dynamic> data = category.toMap();
+    data['userId'] = userId;
+
+    // إذا الـ id موجود مسبقاً، نحدث، وإلا نضيف
+    if (category.id != null) {
+      final existing = await db.query(
+        _tableCategories,
+        where: 'id = ? AND userId = ?',
+        whereArgs: [category.id, userId],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        await db.update(
+          _tableCategories,
+          data,
+          where: 'id = ? AND userId = ?',
+          whereArgs: [category.id, userId],
+        );
+        return category.id!;
+      }
+    }
+
+    return await db.insert(_tableCategories, data);
+  }
+
   /// جلب تصنيفات مستخدم معين
   Future<List<Category>> getCategories(String userId) async {
     final db = await database;
@@ -293,6 +322,33 @@ class DatabaseHelper {
     final db = await database;
     final Map<String, dynamic> data = medicine.toMap();
     data['userId'] = userId; // ✅ إضافة userId
+    return await db.insert(_tableMedicines, data);
+  }
+
+  /// ✅ upsert (تحديث أو إضافة) دواء - للسحب من Firestore
+  Future<int> upsertMedicine(Medicine medicine, String userId) async {
+    final db = await database;
+    final Map<String, dynamic> data = medicine.toMap();
+    data['userId'] = userId;
+
+    if (medicine.id != null) {
+      final existing = await db.query(
+        _tableMedicines,
+        where: 'id = ? AND userId = ?',
+        whereArgs: [medicine.id, userId],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        await db.update(
+          _tableMedicines,
+          data,
+          where: 'id = ? AND userId = ?',
+          whereArgs: [medicine.id, userId],
+        );
+        return medicine.id!;
+      }
+    }
+
     return await db.insert(_tableMedicines, data);
   }
 
@@ -474,6 +530,32 @@ class DatabaseHelper {
   Future<int> insertLog(MedicineLog log) async {
     final db = await database;
     return await db.insert(_tableLogs, log.toMap());
+  }
+
+  /// ✅ upsert (تحديث أو إضافة) سجل - للسحب من Firestore
+  Future<int> upsertLog(MedicineLog log) async {
+    final db = await database;
+    final Map<String, dynamic> data = log.toMap();
+
+    if (log.id != null) {
+      final existing = await db.query(
+        _tableLogs,
+        where: 'id = ?',
+        whereArgs: [log.id],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        await db.update(
+          _tableLogs,
+          data,
+          where: 'id = ?',
+          whereArgs: [log.id],
+        );
+        return log.id!;
+      }
+    }
+
+    return await db.insert(_tableLogs, data);
   }
 
   /// جلب سجلات مستخدم معين (مع فلترة اختيارية)

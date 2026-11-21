@@ -1,12 +1,13 @@
 // ============================================================
 // ملف: auth_service.dart
 // المسار: lib/services/auth_service.dart
-// الوصف: خدمة المصادقة - تدعم عزل البيانات لكل مستخدم
+// الوصف: خدمة المصادقة - تدعم عزل البيانات لكل مستخدم + FCM Token
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // 👈 ضفت هاد
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,6 +20,7 @@ class AuthService extends GetxController {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseMessaging _messaging = FirebaseMessaging.instance; // 👈 ضفت هاد
 
   // ==========================================================
   // المتغيرات التفاعلية
@@ -56,10 +58,50 @@ class AuthService extends GetxController {
 
       if (user != null) {
         _loadUserName();
+        _saveFcmToken(); // 👈 نحدث التوكن كل ما يسجل دخول
       } else {
         _userName.value = '';
       }
     });
+
+    // 👇 استماع لتحديث الـ Token (Firebase بيحدثه كل فترة)
+    _messaging.onTokenRefresh.listen((newToken) {
+      _updateTokenInFirestore(newToken);
+    });
+  }
+
+  // ==========================================================
+  // ✅ حفظ الـ FCM Token للمستخدم
+  // ==========================================================
+  Future<void> _saveFcmToken() async {
+    try {
+      if (userId == null) return;
+
+      // نطلب الصلاحية أول مرة
+      await _messaging.requestPermission();
+
+      final String? token = await _messaging.getToken();
+      if (token != null) {
+        await _updateTokenInFirestore(token);
+      }
+    } catch (e) {
+      debugPrint('❌ خطأ في حفظ FCM Token: $e');
+    }
+  }
+
+  Future<void> _updateTokenInFirestore(String token) async {
+    try {
+      if (userId == null) return;
+
+      await _firestore.collection('users').doc(userId).set({
+        'fcmToken': token,
+        'lastTokenUpdate': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true)); // merge عشان ما نمسح باقي البيانات
+
+      debugPrint('✅ تم حفظ FCM Token في Firestore: $token');
+    } catch (e) {
+      debugPrint('❌ خطأ في حفظ Token في Firestore: $e');
+    }
   }
 
   // ==========================================================
@@ -130,6 +172,8 @@ class AuthService extends GetxController {
         password: password,
       );
       debugPrint('✅ تم تسجيل الدخول بنجاح');
+
+      // الـ authStateChanges رح يتولى حفظ التوكن تلقائياً
       return true;
     } on FirebaseAuthException catch (e) {
       debugPrint('❌ خطأ FirebaseAuth: ${e.code}');
@@ -181,16 +225,20 @@ class AuthService extends GetxController {
           debugPrint('⚠️ SharedPreferences فشل: $e');
         }
 
-        // ✅ 3. حفظ في Firestore
-        /*try {
+        // ✅ 3. حفظ في Firestore (مع التوكن إن وجد)
+        try {
+          String? token = await _messaging.getToken();
+
           await _firestore.collection('users').doc(uid).set({
             'name': trimmedName,
             'email': email.trim(),
             'createdAt': FieldValue.serverTimestamp(),
+            if (token != null) 'fcmToken': token, // 👈 نحفظ التوكن مع البيانات
           });
+          debugPrint('✅ تم حفظ البيانات في Firestore');
         } catch (e) {
           debugPrint('⚠️ Firestore فشل: $e');
-        }*/
+        }
 
         // ✅ 4. تحديث المتغير المحلي
         _userName.value = trimmedName;
@@ -249,6 +297,18 @@ class AuthService extends GetxController {
   // ==========================================================
   Future<void> signOut() async {
     try {
+      // 👇 نحذف الـ Token من Firestore عشان ما يوصله إشعارات
+      if (userId != null) {
+        try {
+          await _firestore.collection('users').doc(userId).update({
+            'fcmToken': FieldValue.delete(),
+          });
+          debugPrint('✅ تم حذف FCM Token من Firestore');
+        } catch (e) {
+          debugPrint('⚠️ فشل حذف Token: $e');
+        }
+      }
+
       await _auth.signOut();
       _userName.value = '';
       debugPrint('✅ تم تسجيل الخروج');

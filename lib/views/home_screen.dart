@@ -2,7 +2,7 @@
 // ملف: home_screen.dart
 // المسار: lib/views/home/home_screen.dart
 // الوصف: الصفحة الرئيسية - قائمة الأدوية والتصنيفات
-//         بدون أدراج وبدون بلوتوث
+//         ✅ تم إصلاح مشكلة تداخل النصوص مع الأزرار (Overflow)
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -74,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
+          // 👇 تم إزالة Expanded من هنا لأنه كان يسبب خطأ
           child: Column(
             children: [
               // ==================================================
@@ -84,36 +85,48 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // النصوص الترحيبية
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Obx(() {
-                          final authService = Get.find<AuthService>();
-                          final userName = authService.userName;
-                          return Text(
-                            userName.isEmpty ? 'welcome'.tr : '${'welcome'.tr} $userName',
+                    // 👇 التعديل الأهم: تغليف النصوص بـ Expanded عشان ما تتداخل مع الأزرار
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'welcome'.tr,
                             style: GoogleFonts.cairo(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.9),
+                              fontSize: 14,
+                              color: Colors.white.withOpacity(0.9),
                             ),
-                          );
-                       }),
-                        Text(
-                          'app_name'.tr,
-                          style: GoogleFonts.cairo(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
                           ),
-                        ),
-                      ],
+                          Obx(() {
+                            final authService = Get.find<AuthService>();
+                            final userName = authService.userName;
+                            return Text(
+                              userName.isEmpty ? ' ' : userName,
+                              style: GoogleFonts.cairo(
+                                fontSize: 14,
+                                color: Colors.white.withOpacity(0.9),
+                              ),
+                              overflow: TextOverflow.ellipsis, // 👈 لو طويل يطلع "..."
+                              maxLines: 1,
+                            );
+                          }),
+                          Text(
+                            'app_name'.tr,
+                            style: GoogleFonts.cairo(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            overflow: TextOverflow.ellipsis, // 👈 لو طويل يطلع "..."
+                            maxLines: 1,
+                          ),
+                        ],
+                      ),
                     ),
 
                     // أزرار الرأس
                     Row(
                       children: [
-
                         _buildHeaderButton(
                           icon: Icons.bar_chart,
                           tooltip: 'reports'.tr,
@@ -121,10 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Get.to(() => const ReportsScreen());
                           },
                         ),
-
-                        const SizedBox(width: 8),
-
-                        // زر التصنيفات
+                        const SizedBox(width: 4),
                         _buildHeaderButton(
                           icon: Icons.category_outlined,
                           tooltip: 'categories'.tr,
@@ -132,8 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Get.to(() => const CategoriesScreen());
                           },
                         ),
-                        const SizedBox(width: 8),
-                        // زر الإعدادات
+                        const SizedBox(width: 4),
                         _buildHeaderButton(
                           icon: Icons.settings_outlined,
                           tooltip: 'settings'.tr,
@@ -329,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
               );
-            }).toList(),
+            }),
           ],
         ),
       );

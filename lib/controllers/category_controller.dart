@@ -1,15 +1,17 @@
 // ============================================================
 // ملف: category_controller.dart
 // المسار: lib/controllers/category_controller.dart
-// الوصف: متحكم التصنيفات - يدعم عزل البيانات لكل مستخدم (userId)
+// الوصف: متحكم التصنيفات - يدعم عزل البيانات + التزامن مع Firestore
+//         ✅ سحب البيانات من Firestore (Pull)
 // ============================================================
 
 // 📦 استيراد المكتبات المطلوبة
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/category.dart';
 import '../core/database/database_helper.dart';
-import '../services/auth_service.dart';   // ✅ جديد
+import '../services/auth_service.dart';
 
 class CategoryController extends GetxController {
   // ==========================================================
@@ -17,9 +19,13 @@ class CategoryController extends GetxController {
   // ==========================================================
 
   final DatabaseHelper _dbHelper = DatabaseHelper();
-  final AuthService _authService = Get.find<AuthService>();  // ✅ جديد
+  final AuthService _authService = Get.find<AuthService>();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Worker? _authWorker;   // ✅ لمتابعة تغييرات المستخدم
+  Worker? _authWorker;
+
+  // ✅ منع تكرار السحب
+  bool _isSyncingFromFirestore = false;
 
   // ==========================================================
   // المتغيرات التفاعلية
@@ -45,19 +51,16 @@ class CategoryController extends GetxController {
   void onInit() {
     super.onInit();
 
-    // ✅ الاستماع لتغييرات المستخدم
     _authWorker = ever(_authService.userRx, (user) {
       if (user != null) {
         debugPrint('👤 تغير المستخدم → إعادة تحميل التصنيفات');
         loadCategories();
       } else {
-        // تسجيل خروج → مسح القائمة
         _categories.clear();
         debugPrint('🚪 تسجيل خروج → مسح التصنيفات');
       }
     });
 
-    // ✅ تحميل مبدئي (إذا كان المستخدم مسجل)
     if (_authService.userId != null) {
       loadCategories();
     }
@@ -65,8 +68,93 @@ class CategoryController extends GetxController {
 
   @override
   void onClose() {
-    _authWorker?.dispose();   // ✅ إلغاء مستمع المستخدم
+    _authWorker?.dispose();
     super.onClose();
+  }
+
+  // ==========================================================
+  // 🔥 دالة مساعدة: مزامنة تصنيف واحد مع Firestore (Push)
+  // ==========================================================
+  Future<void> _syncCategoryToFirestore(Category category, String userId) async {
+    try {
+      if (category.id == null) return;
+
+      await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('categories')
+          .doc(category.id.toString())
+          .set({
+        'name': category.name,
+        'colorValue': category.colorValue,
+        'iconCode': category.iconCode,
+        'createdAt': category.createdAt?.toIso8601String(),
+        'lastSyncedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      debugPrint('✅ تمت مزامنة التصنيف ${category.name} مع Firestore');
+    } catch (e) {
+      debugPrint('⚠️ فشل مزامنة التصنيف مع Firestore: $e');
+    }
+  }
+
+  // ==========================================================
+  // ✅ سحب التصنيفات من Firestore (Pull)
+  // ==========================================================
+  Future<void> _pullCategoriesFromFirestore(String userId) async {
+    if (_isSyncingFromFirestore) {
+      debugPrint('⏭️ سحب التصنيفات جارٍ بالفعل - تخطي');
+      return;
+    }
+
+    _isSyncingFromFirestore = true;
+
+    try {
+      debugPrint('📥 جاري سحب التصنيفات من Firestore...');
+
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('categories')
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        debugPrint('⚠️ لا توجد تصنيفات في Firestore');
+        return;
+      }
+
+      debugPrint('📦 تم جلب ${snapshot.docs.length} تصنيف من Firestore');
+
+      for (final doc in snapshot.docs) {
+        try {
+          final data = doc.data();
+
+          // نحوّل الـ id من String لـ int
+          final int? categoryId = int.tryParse(doc.id);
+
+          final Category category = Category(
+            id: categoryId,
+            name: data['name'] ?? '',
+            colorValue: data['colorValue'] ?? 0,
+            iconCode: data['iconCode'] ?? 0,
+            createdAt: data['createdAt'] != null
+                ? DateTime.tryParse(data['createdAt'])
+                : null,
+          );
+
+          // upsert في SQLite
+          await _dbHelper.upsertCategory(category, userId);
+        } catch (e) {
+          debugPrint('⚠️ خطأ في معالجة تصنيف من Firestore: $e');
+        }
+      }
+
+      debugPrint('✅ تم سحب التصنيفات وتحديث SQLite');
+    } catch (e) {
+      debugPrint('❌ خطأ في سحب التصنيفات من Firestore: $e');
+    } finally {
+      _isSyncingFromFirestore = false;
+    }
   }
 
   // ==========================================================
@@ -74,7 +162,6 @@ class CategoryController extends GetxController {
   // ==========================================================
 
   Future<void> loadCategories() async {
-    // ✅ التحقق من وجود مستخدم
     final String? userId = _authService.userId;
     if (userId == null) {
       debugPrint('⚠️ لا يوجد مستخدم - تخطي تحميل التصنيفات');
@@ -85,7 +172,10 @@ class CategoryController extends GetxController {
     _isLoading.value = true;
 
     try {
-      // ✅ تمرير userId
+      // 🔥 1. سحب من Firestore أولاً
+      await _pullCategoriesFromFirestore(userId);
+
+      // 2. قراءة من SQLite
       final categories = await _dbHelper.getCategories(userId);
       _categories.assignAll(categories);
       debugPrint('✅ تم تحميل ${categories.length} تصنيف للمستخدم $userId');
@@ -114,7 +204,6 @@ class CategoryController extends GetxController {
       return false;
     }
 
-    // التحقق من أن الاسم غير فارغ
     if (category.name.trim().isEmpty) {
       Get.snackbar(
         'error'.tr,
@@ -126,7 +215,6 @@ class CategoryController extends GetxController {
       return false;
     }
 
-    // التحقق من عدم وجود تصنيف بنفس الاسم
     if (_categories.any((c) => c.name.toLowerCase() == category.name.toLowerCase())) {
       Get.snackbar(
         'warning_alert'.tr,
@@ -139,8 +227,13 @@ class CategoryController extends GetxController {
     }
 
     try {
-      // ✅ تمرير userId
-      await _dbHelper.insertCategory(category, userId);
+      // ✅ إضافة محلياً
+      final newId = await _dbHelper.insertCategory(category, userId);
+      category.id = newId;
+
+      // 🔥 التزامن مع Firestore
+      await _syncCategoryToFirestore(category, userId);
+
       await loadCategories();
 
       Get.snackbar(
@@ -186,8 +279,11 @@ class CategoryController extends GetxController {
     }
 
     try {
-      // ✅ تمرير userId
       await _dbHelper.updateCategory(category, userId);
+
+      // 🔥 التزامن مع Firestore
+      await _syncCategoryToFirestore(category, userId);
+
       await loadCategories();
 
       Get.snackbar(
@@ -225,13 +321,40 @@ class CategoryController extends GetxController {
       final category = _categories.firstWhereOrNull((c) => c.id == categoryId);
       if (category == null) return false;
 
-      // 1️⃣ حذف الأدوية المرتبطة
-      await _dbHelper.deleteMedicinesByCategory(categoryId, userId);   // ✅
+      // 1️⃣ حذف الأدوية المرتبطة محلياً
+      await _dbHelper.deleteMedicinesByCategory(categoryId, userId);
 
-      // 2️⃣ حذف التصنيف
-      await _dbHelper.deleteCategory(categoryId, userId);   // ✅
+      // 2️⃣ حذف التصنيف محلياً
+      await _dbHelper.deleteCategory(categoryId, userId);
 
-      // 3️⃣ إعادة تحميل
+      // 🔥 3️⃣ حذف التصنيف + الأدوية المرتبطة من Firestore
+      try {
+        // حذف الأدوية المرتبطة
+        final medicinesQuery = await _firestore
+            .collection('users')
+            .doc(userId)
+            .collection('medicines')
+            .where('categoryId', isEqualTo: categoryId)
+            .get();
+
+        for (final doc in medicinesQuery.docs) {
+          await doc.reference.delete();
+        }
+        debugPrint('✅ تم حذف ${medicinesQuery.docs.length} دواء من Firestore');
+
+        // حذف التصنيف
+        await _firestore
+            .collection('users')
+            .doc(userId)
+            .collection('categories')
+            .doc(categoryId.toString())
+            .delete();
+        debugPrint('✅ تم حذف التصنيف من Firestore');
+      } catch (e) {
+        debugPrint('⚠️ فشل حذف التصنيف من Firestore: $e');
+      }
+
+      // 4️⃣ إعادة تحميل
       await loadCategories();
 
       Get.snackbar(
@@ -258,7 +381,7 @@ class CategoryController extends GetxController {
   }
 
   // ==========================================================
-  // دوال مساعدة (بدون userId - تعمل على القائمة المحلية)
+  // دوال مساعدة
   // ==========================================================
 
   Category? getCategoryById(int? categoryId) {

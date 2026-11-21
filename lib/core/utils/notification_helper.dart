@@ -1,7 +1,7 @@
 // ============================================================
 // ملف: notification_helper.dart
 // المسار: lib/core/utils/notification_helper.dart
-// الوصف: مساعد الإشعارات - ✅ تم حذف showMedicineNotification المكررة
+// الوصف: مساعد الإشعارات - ✅ تمت إضافة دعم Firebase Cloud Messaging (FCM)
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -11,8 +11,20 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
+// 👇 تمت إضافة استيراد FCM
+import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../models/medicine.dart';
 import 'package:smart_pillbox/services/background_task.dart';
+
+// ============================================================
+// 📡 معالج رسائل FCM في الخلفية (لازم يكون خارج الكلاس)
+// ============================================================
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  debugPrint("🔔 FCM Background Message: ${message.messageId}");
+  // ملاحظة: الإشعارات العادية (Notification) النظام بيعرضها تلقائياً
+  // لو التطبيق مسكر. هاد المعالج بيفيد لو بدك تعمل شغلات بالخلفية.
+}
 
 // 🔔 NotificationHelper: فئة Singleton لإدارة جميع الإشعارات
 class NotificationHelper {
@@ -80,7 +92,79 @@ class NotificationHelper {
     await _requestPermissions();
     await _createNotificationChannels();
 
+    // 👇 تفعيل استماع رسائل FCM والتطبيق مفتوح
+    _setupFirebaseMessagingListeners();
+
     debugPrint('✅ تم تهيئة نظام الإشعارات بنجاح');
+  }
+
+  // ==========================================================
+  // 📡 إعداد مستمعي رسائل Firebase (FCM)
+  // ==========================================================
+  void _setupFirebaseMessagingListeners() {
+    // 1. لما يجي إشعار والتطبيق مفتوح (Foreground)
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      debugPrint('📩 FCM Foreground Message: ${message.messageId}');
+
+      if (message.notification != null) {
+        _showRemoteNotification(message);
+      }
+    });
+
+    // 2. لما المستخدم يضغط على إشعار فتح التطبيق (والتطبيق كان بالخلفية)
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint('👆 User tapped FCM notification (from background)');
+      // هنا بتقدر تعمل توجيه لصفحة معينة مثل صفحة الدواء
+    });
+
+    // 3. استقبال التوكن (للربط مع المستخدم لاحقاً)
+    FirebaseMessaging.instance.getToken().then((token) {
+      debugPrint('📱 FCM Token: $token');
+      // ممكن هنا تحفظ التوكن في Firestore تبع المستخدم
+    });
+  }
+
+  // ==========================================================
+  // 📲 عرض إشعار جاي من FCM (في حالة التطبيق مفتوح)
+  // ==========================================================
+  Future<void> _showRemoteNotification(RemoteMessage message) async {
+    final settings = await _getNotificationSettings();
+    if (!settings['enabled']!) return;
+
+    final notification = message.notification;
+    if (notification == null) return;
+
+    final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      _channelIdGeneral,
+      _channelNameGeneral,
+      channelDescription: _channelDescGeneral,
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: settings['sound']!,
+      enableVibration: settings['vibration']!,
+      icon: '@mipmap/ic_launcher',
+      color: const Color(0xFF1B7B6E),
+      colorized: true,
+    );
+
+    final DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: settings['sound']!,
+    );
+
+    final NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _notificationsPlugin.show(
+      notification.hashCode,
+      notification.title,
+      notification.body,
+      details,
+      payload: message.data.toString(),
+    );
   }
 
   // ==========================================================
@@ -189,9 +273,6 @@ class NotificationHelper {
     debugPrint('⚠️ لا يوجد يوم مطابق خلال 30 يوم');
     return null;
   }
-
-  // ❌❌❌ تم حذف showMedicineNotification بالكامل
-  // السبب: كانت تعرض إشعار فوري مكرر مع الإشعار المجدول
 
   // ==========================================================
   // ✅ جدولة إشعار (مع مراعاة الأيام المحددة)
@@ -657,18 +738,6 @@ class NotificationHelper {
 
   String _getMedicineNotificationBody(Medicine medicine, {int? doseNumber}) {
     final StringBuffer buffer = StringBuffer();
-
-   /* if (doseNumber != null) {
-      if (doseNumber == 1) {
-        buffer.write('💊 ${'first_dose'.tr}\n');
-      } else if (doseNumber == 2) {
-        buffer.write('💊 ${'second_dose'.tr}\n');
-      } else if (doseNumber == 3) {
-        buffer.write('💊 ${'third_dose'.tr}\n');
-      }
-    }*/
-
-    //buffer.write('${'remaining_colon'.tr} ${medicine.pillCount-1} ${'pill'.tr}.');
 
     if (medicine.pillCount == 1) {
       buffer.write('\n${'last_pill_refill'.tr}');
