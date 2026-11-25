@@ -5,6 +5,7 @@
 //         ✅ تم إصلاح مشكلة التكرار (حبتين بدل حبة)
 //         ✅ تم إصلاح مشكلة الإشعارين (حذف الإشعار الفوري المكرر)
 //         ✅ سحب البيانات من Firestore (Pull)
+//         ✅ إصلاح مشكلة تفويت الجرعة (Timer)
 // ============================================================
 
 import 'dart:async';
@@ -130,7 +131,6 @@ class MedicineController extends GetxController {
         try {
           final data = doc.data();
 
-          // نحوّل الـ id من String لـ int
           final int? medicineId = int.tryParse(doc.id);
 
           final Medicine medicine = Medicine(
@@ -163,14 +163,13 @@ class MedicineController extends GetxController {
                 ? DateTime.tryParse(data['lastRefillDate'])
                 : null,
             selectedDays: (data['selectedDays'] as List?)
-                !.map((e) => e as int)
-                .toList(),
+                ?.map((e) => e as int)
+                .toList() ?? [],
             processedTimes: (data['processedTimes'] as List?)
-                !.map((e) => e as int)
-                .toList(),
+                ?.map((e) => e as int)
+                .toList() ?? [],
           );
 
-          // upsert في SQLite
           await _dbHelper.upsertMedicine(medicine, userId);
         } catch (e) {
           debugPrint('⚠️ خطأ في معالجة دواء من Firestore: $e');
@@ -201,10 +200,8 @@ class MedicineController extends GetxController {
     _isLoading.value = true;
 
     try {
-      // 🔥 1. سحب من Firestore أولاً (عشان نضمن أحدث بيانات)
       await _pullMedicinesFromFirestore(userId);
 
-      // 2. قراءة من SQLite
       final medicines = await _dbHelper.getMedicines(userId);
       _medicines.assignAll(medicines);
 
@@ -299,9 +296,10 @@ class MedicineController extends GetxController {
         final TimeOfDay medTime = timeData['time'];
         final int doseNumber = timeData['number'];
         final int medMinutes = medTime.hour * 60 + medTime.minute;
-        final int diff = (medMinutes - nowMinutes).abs();
 
-        if (diff == 0) {
+        // 👇 التعديل: نقبل الوقت الحالي، أو اللي فات بدقيقة (يعني 0 أو 1)
+        final int diff = nowMinutes - medMinutes;
+        if (diff == 0 || diff == 1) { // 👈 هون السر
           if (med.wasTimeProcessedToday(doseNumber)) continue;
 
           final doseKey = '${med.id}_$doseNumber';

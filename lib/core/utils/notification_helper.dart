@@ -1,7 +1,7 @@
 // ============================================================
 // ملف: notification_helper.dart
 // المسار: lib/core/utils/notification_helper.dart
-// الوصف: مساعد الإشعارات - ✅ تمت إضافة دعم Firebase Cloud Messaging (FCM)
+// الوصف: مساعد الإشعارات - ✅ دعم FCM + جدولة ذكية + WorkManager دوري
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -11,22 +11,19 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
-// 👇 تمت إضافة استيراد FCM
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../models/medicine.dart';
 import 'package:smart_pillbox/services/background_task.dart';
 
 // ============================================================
-// 📡 معالج رسائل FCM في الخلفية (لازم يكون خارج الكلاس)
+// 📡 معالج رسائل FCM في الخلفية
 // ============================================================
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   debugPrint("🔔 FCM Background Message: ${message.messageId}");
-  // ملاحظة: الإشعارات العادية (Notification) النظام بيعرضها تلقائياً
-  // لو التطبيق مسكر. هاد المعالج بيفيد لو بدك تعمل شغلات بالخلفية.
 }
 
-// 🔔 NotificationHelper: فئة Singleton لإدارة جميع الإشعارات
+// 🔔 NotificationHelper
 class NotificationHelper {
   // ===== Singleton Pattern =====
   static final NotificationHelper _instance = NotificationHelper._internal();
@@ -92,7 +89,6 @@ class NotificationHelper {
     await _requestPermissions();
     await _createNotificationChannels();
 
-    // 👇 تفعيل استماع رسائل FCM والتطبيق مفتوح
     _setupFirebaseMessagingListeners();
 
     debugPrint('✅ تم تهيئة نظام الإشعارات بنجاح');
@@ -102,30 +98,24 @@ class NotificationHelper {
   // 📡 إعداد مستمعي رسائل Firebase (FCM)
   // ==========================================================
   void _setupFirebaseMessagingListeners() {
-    // 1. لما يجي إشعار والتطبيق مفتوح (Foreground)
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint('📩 FCM Foreground Message: ${message.messageId}');
-
       if (message.notification != null) {
         _showRemoteNotification(message);
       }
     });
 
-    // 2. لما المستخدم يضغط على إشعار فتح التطبيق (والتطبيق كان بالخلفية)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint('👆 User tapped FCM notification (from background)');
-      // هنا بتقدر تعمل توجيه لصفحة معينة مثل صفحة الدواء
     });
 
-    // 3. استقبال التوكن (للربط مع المستخدم لاحقاً)
     FirebaseMessaging.instance.getToken().then((token) {
       debugPrint('📱 FCM Token: $token');
-      // ممكن هنا تحفظ التوكن في Firestore تبع المستخدم
     });
   }
 
   // ==========================================================
-  // 📲 عرض إشعار جاي من FCM (في حالة التطبيق مفتوح)
+  // 📲 عرض إشعار جاي من FCM
   // ==========================================================
   Future<void> _showRemoteNotification(RemoteMessage message) async {
     final settings = await _getNotificationSettings();
@@ -275,7 +265,7 @@ class NotificationHelper {
   }
 
   // ==========================================================
-  // ✅ جدولة إشعار (مع مراعاة الأيام المحددة)
+  // ✅ جدولة إشعار (مع مراعاة الأيام المحددة) - الحل الجذري
   // ==========================================================
   Future<void> scheduleMedicineNotification({
     required Medicine medicine,
@@ -288,15 +278,10 @@ class NotificationHelper {
       return;
     }
 
-    final DateTime? scheduledDate = _calculateNextScheduledDate(doseTime, medicine);
-    if (scheduledDate == null) {
-      debugPrint('⚠️ لا يوجد يوم مطابق');
-      return;
-    }
-
     final bool soundEnabled = settings['sound']!;
     final bool vibrationEnabled = settings['vibration']!;
 
+    // 1️⃣ جهز تفاصيل الإشعار
     final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       _channelIdMedicine,
       _channelNameMedicine,
@@ -327,24 +312,100 @@ class NotificationHelper {
       iOS: iosDetails,
     );
 
-    final int notificationId = (medicine.id ?? 0) * 10 + doseNumber;
+    // 2️⃣ هل المستخدم مختار كل الأيام؟
+    final bool isEveryDay = medicine.selectedDays.isEmpty;
 
-    await _notificationsPlugin.zonedSchedule(
-      notificationId,
-      _getMedicineNotificationTitle(medicine, doseNumber: doseNumber),
-      _getMedicineNotificationBody(medicine, doseNumber: doseNumber),
-      tz.TZDateTime.from(scheduledDate, tz.local),
-      details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-      payload: 'medicine_${medicine.id}_$doseNumber',
-    );
+    if (isEveryDay) {
+      // ===== حالة "كل الأيام" =====
+      // نجدول إشعار واحد يومي
+      final DateTime? scheduledDate = _calculateNextScheduledDate(doseTime, medicine);
+      if (scheduledDate == null) {
+        debugPrint('⚠️ لا يوجد يوم مطابق');
+        return;
+      }
 
-    debugPrint('⏰ تمت جدولة إشعار: $notificationId في $scheduledDate');
+      final int notificationId = (medicine.id ?? 0) * 10 + doseNumber;
+
+      await _notificationsPlugin.zonedSchedule(
+        notificationId,
+        _getMedicineNotificationTitle(medicine, doseNumber: doseNumber),
+        _getMedicineNotificationBody(medicine, doseNumber: doseNumber),
+        tz.TZDateTime.from(scheduledDate, tz.local),
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time, // 👈 يومي
+        payload: 'medicine_${medicine.id}_$doseNumber',
+      );
+
+      debugPrint('⏰ تمت جدولة إشعار يومي: $notificationId في $scheduledDate');
+    } else {
+      // ===== حالة "أيام محددة" =====
+      // نلف على كل يوم مختار ونجدول إشعار أسبوعي خاص فيه
+      for (final int dayValue in medicine.selectedDays) {
+        final DateTime? nextDate = _getNextDateForWeekday(dayValue, doseTime);
+        if (nextDate == null) continue;
+
+        // نعطي كل يوم ID مختلف عشان ما يتعارضوا
+        final int notificationId = ((medicine.id ?? 0) * 10 + doseNumber) * 10 + dayValue;
+
+        await _notificationsPlugin.zonedSchedule(
+          notificationId,
+          _getMedicineNotificationTitle(medicine, doseNumber: doseNumber),
+          _getMedicineNotificationBody(medicine, doseNumber: doseNumber),
+          tz.TZDateTime.from(nextDate, tz.local),
+          details,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime, // 👈 أسبوعي في نفس اليوم
+          payload: 'medicine_${medicine.id}_$doseNumber',
+        );
+
+        debugPrint('⏰ تمت جدولة إشعار أسبوعي (يوم $dayValue): $notificationId في $nextDate');
+      }
+    }
   }
 
   // ==========================================================
-  // ✅ جدولة الإشعار + WorkManager معاً
+  // ✅ دالة مساعدة: تجيب أقرب تاريخ مطابق ليوم معين في الأسبوع
+  // ==========================================================
+  DateTime? _getNextDateForWeekday(int dayValue, TimeOfDay doseTime) {
+    final now = DateTime.now();
+
+    // تحويل dayValue (1=السبت، 2=الأحد، ...، 7=الجمعة) إلى DateTime.weekday (1=الاثنين ... 7=الأحد)
+    final Map<int, int> dayValueToWeekday = {
+      1: 6, // السبت
+      2: 7, // الأحد
+      3: 1, // الاثنين
+      4: 2, // الثلاثاء
+      5: 3, // الأربعاء
+      6: 4, // الخميس
+      7: 5, // الجمعة
+    };
+
+    final int targetWeekday = dayValueToWeekday[dayValue] ?? 1;
+
+    for (int daysToAdd = 0; daysToAdd < 14; daysToAdd++) {
+      final candidate = DateTime(
+        now.year,
+        now.month,
+        now.day + daysToAdd,
+        doseTime.hour,
+        doseTime.minute,
+      );
+
+      if (candidate.isBefore(now)) continue;
+
+      if (candidate.weekday == targetWeekday) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  // ==========================================================
+  // ✅ جدولة الإشعار + WorkManager معاً (دوري)
   // ==========================================================
   Future<void> scheduleMedicineNotificationWithWorkManager({
     required Medicine medicine,
@@ -378,11 +439,12 @@ class NotificationHelper {
       doseNumber: doseNumber,
     );
 
-    // 2️⃣ جدولة WorkManager
+    // 2️⃣ جدولة WorkManager دوري (كل يوم)
     try {
-      await Workmanager().registerOneOffTask(
+      await Workmanager().registerPeriodicTask(
         "medicine_${medicine.id}_$doseNumber",
         medicineDoseTask,
+        frequency: const Duration(days: 1), // 👈 كل يوم
         initialDelay: initialDelay,
         inputData: {
           'medicineId': medicine.id,
@@ -392,9 +454,10 @@ class NotificationHelper {
         constraints: Constraints(
           networkType: NetworkType.notRequired,
         ),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.replace, // 👈 استبدال المهمة القديمة
       );
 
-      debugPrint('✅ تمت جدولة WorkManager للجرعة $doseNumber في $scheduledDate (المستخدم: ${medicine.userId})');
+      debugPrint('✅ تمت جدولة WorkManager الدوري للجرعة $doseNumber في $scheduledDate (المستخدم: ${medicine.userId})');
     } catch (e) {
       debugPrint('❌ خطأ في جدولة WorkManager: $e');
     }
@@ -424,8 +487,16 @@ class NotificationHelper {
   // ✅ إلغاء الإشعارات + مهام WorkManager للدواء
   // ==========================================================
   Future<void> cancelAllScheduledForMedicine(int medicineId) async {
-    for (int i = 1; i <= 5; i++) {
-      await _notificationsPlugin.cancel(medicineId * 10 + i);
+    // نمسح كل الاحتمالات: كل جرعة (1-5) وكل يوم (0-7)
+    for (int dose = 1; dose <= 5; dose++) {
+      // ID الأساسي (لما كل الأيام)
+      await _notificationsPlugin.cancel(medicineId * 10 + dose);
+
+      // IDs الأيام المحددة
+      for (int day = 1; day <= 7; day++) {
+        final int id = ((medicineId * 10 + dose) * 10 + day);
+        await _notificationsPlugin.cancel(id);
+      }
     }
 
     try {

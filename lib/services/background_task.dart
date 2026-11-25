@@ -5,6 +5,7 @@
 //         ✅ يدعم عزل البيانات لكل مستخدم (userId)
 //         ✅ يسجل الأحداث في medicine_logs
 //         ✅ يزامن البيانات مع Firestore (pillCount, processedTimes)
+//         ✅ تمت إزالة إعادة الجدولة (لأن WorkManager الدوري في notification_helper مسؤول عنها)
 // ============================================================
 
 import 'dart:async';
@@ -12,7 +13,6 @@ import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:workmanager/workmanager.dart';
-// 👇 ضفنا مكتبة الفايربيز
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:smart_pillbox/firebase_options.dart';
@@ -173,8 +173,8 @@ Future<void> _handleMedicineDose(Map<String, dynamic> inputData) async {
     pillCountAfter: pillCount,
   );
 
-  // ✅ إعادة جدولة الجرعة القادمة (مع userId)
-  await _rescheduleNextDose(medicineId, doseNumber, userId, medicineMap);
+  // ❌ تمت إزالة إعادة الجدولة (لأن WorkManager الدوري في notification_helper مسؤول عنها)
+  // await _rescheduleNextDose(medicineId, doseNumber, userId, medicineMap);
 }
 
 // ==========================================================
@@ -188,8 +188,6 @@ Future<void> _syncWithFirestore({
   required List<int> processedTimes,
 }) async {
   try {
-    // المسار في Firestore: users/{userId}/medicines/{medicineId}
-    // ⚠️ تأكد أن هذا هو نفس المسار اللي بتستخدمه في التطبيق
     await FirebaseFirestore.instance
         .collection('users')
         .doc(userId)
@@ -200,12 +198,10 @@ Future<void> _syncWithFirestore({
       'lastProcessedDate': lastProcessedDate.toIso8601String(),
       'processedTimes': processedTimes,
       'lastSyncedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true)); // merge عشان ما نمسح باقي بيانات الدواء
+    }, SetOptions(merge: true));
 
     debugPrint('✅ تمت مزامنة البيانات مع Firestore');
   } catch (e) {
-    // ❌ لا نوقف العملية لو فشلت المزامنة (أوفلاين مثلاً)
-    // Firestore بيعيد المحاولة تلقائياً لما يرجع النت
     debugPrint('⚠️ فشل التزامن مع Firestore (سيتم لاحقاً): $e');
   }
 }
@@ -226,7 +222,6 @@ Future<void> _logTakenInBackground({
   required int pillCountAfter,
 }) async {
   try {
-    // ✅ تنسيق الوقت المجدول
     String? scheduledTime;
     if (scheduledHour != null && scheduledMinute != null) {
       final h = scheduledHour.toString().padLeft(2, '0');
@@ -251,133 +246,6 @@ Future<void> _logTakenInBackground({
   } catch (e) {
     debugPrint('❌ خطأ في تسجيل الحدث: $e');
   }
-}
-
-// ==========================================================
-// ✅ إعادة جدولة الجرعة القادمة (مع userId)
-// ==========================================================
-Future<void> _rescheduleNextDose(
-    int medicineId,
-    int doseNumber,
-    String userId,
-    Map<String, dynamic> medicineMap,
-    ) async {
-  try {
-    int? hour;
-    int? minute;
-
-    if (doseNumber == 1) {
-      hour = medicineMap['hour'];
-      minute = medicineMap['minute'];
-    } else if (doseNumber == 2) {
-      hour = medicineMap['hour2'];
-      minute = medicineMap['minute2'];
-    } else if (doseNumber == 3) {
-      hour = medicineMap['hour3'];
-      minute = medicineMap['minute3'];
-    }
-
-    if (hour == null || minute == null) {
-      debugPrint('⚠️ وقت الجرعة غير موجود');
-      return;
-    }
-
-    final String? selectedDaysStr = medicineMap['selectedDays'] as String?;
-    final List<int> selectedDays = selectedDaysStr != null && selectedDaysStr.isNotEmpty
-        ? selectedDaysStr.split(',').map((e) => int.parse(e.trim())).toList()
-        : [];
-
-    final DateTime? nextDate = _calculateNextDate(hour, minute, selectedDays);
-    if (nextDate == null) {
-      debugPrint('⚠️ لا يوجد يوم مطابق');
-      return;
-    }
-
-    final Duration delay = nextDate.difference(DateTime.now());
-    if (delay.isNegative) {
-      debugPrint('⚠️ التأخير سالب');
-      return;
-    }
-
-    await Workmanager().registerOneOffTask(
-      "medicine_${medicineId}_$doseNumber",
-      medicineDoseTask,
-      initialDelay: delay,
-      inputData: {
-        'medicineId': medicineId,
-        'doseNumber': doseNumber,
-        'userId': userId,
-      },
-      constraints: Constraints(
-        networkType: NetworkType.notRequired,
-      ),
-      existingWorkPolicy: ExistingWorkPolicy.keep,
-    );
-
-    debugPrint('✅ تمت إعادة جدولة الجرعة $doseNumber في $nextDate (المستخدم: $userId)');
-  } catch (e) {
-    debugPrint('❌ خطأ في إعادة الجدولة: $e');
-  }
-}
-
-// ==========================================================
-// ✅ حساب أقرب يوم مطابق
-// ==========================================================
-DateTime? _calculateNextDate(int hour, int minute, List<int> selectedDays) {
-  final DateTime now = DateTime.now();
-
-  // ✅✅✅ نبدأ من الغد
-  for (int daysToAdd = 1; daysToAdd < 30; daysToAdd++) {
-    final DateTime candidate = DateTime(
-      now.year,
-      now.month,
-      now.day + daysToAdd,
-      hour,
-      minute,
-    );
-
-    // ✅✅✅ إذا كل الأيام: نرجع الغد مباشرة
-    if (selectedDays.isEmpty) {
-      debugPrint('📅 كل الأيام → الغد: $candidate');
-      return candidate;
-    }
-
-    final int flutterWeekday = candidate.weekday;
-    int ourDayValue;
-    switch (flutterWeekday) {
-      case 6:
-        ourDayValue = 1; // السبت
-        break;
-      case 7:
-        ourDayValue = 2; // الأحد
-        break;
-      case 1:
-        ourDayValue = 3; // الاثنين
-        break;
-      case 2:
-        ourDayValue = 4; // الثلاثاء
-        break;
-      case 3:
-        ourDayValue = 5; // الأربعاء
-        break;
-      case 4:
-        ourDayValue = 6; // الخميس
-        break;
-      case 5:
-        ourDayValue = 7; // الجمعة
-        break;
-      default:
-        ourDayValue = 0;
-    }
-
-    if (selectedDays.contains(ourDayValue)) {
-      debugPrint('📅 يوم مطابق: $candidate (يوم $ourDayValue)');
-      return candidate;
-    }
-  }
-
-  debugPrint('⚠️ لا يوجد يوم مطابق خلال 30 يوم');
-  return null;
 }
 
 // ==========================================================
